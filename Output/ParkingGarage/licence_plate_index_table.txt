@@ -1,0 +1,8 @@
+licence_plate,ticket_dict_table_index
+JSA669,6
+KXE275,2
+LAS776,5
+RCY433,0
+RJA195,4
+WPY346,1
+ZAX016,3
