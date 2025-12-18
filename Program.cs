@@ -20,39 +20,61 @@ namespace ParkingLot
             {
                 Console.WriteLine("Waiting for ticket machine connection...");
 
+                var clientTasks = new List<Task>();
+                
                 while (true)
                 {
-                    using (var pipeServer = new NamedPipeServerStream("ParkingGaragePipe", PipeDirection.InOut, 1))
+                    var pipeServer = new NamedPipeServerStream("ParkingGaragePipe",
+                        PipeDirection.InOut,
+                        NamedPipeServerStream.MaxAllowedServerInstances,
+                        PipeTransmissionMode.Byte,
+                        PipeOptions.Asynchronous);
+                    
+                    await pipeServer.WaitForConnectionAsync();
+                    Console.WriteLine("New ticket machine connected!");
+                    
+                    var clientTask = HandleClientAsync(pipeServer, parkingGarage);
+
+                    clientTasks.RemoveAll(task => task.IsCompleted);
+                    clientTasks.Add(clientTask);
+                }
+            }
+            
+            static async Task HandleClientAsync(NamedPipeServerStream pipeServer, ParkingGarage parkingGarage)
+            {
+                var clientId = Guid.NewGuid().ToString().Substring(0, 8);
+                Console.WriteLine($"Client {clientId} connected.");
+
+    
+                try
+                {
+                    await using (pipeServer)
+                    using (var reader = new StreamReader(pipeServer))
+                    await using (var writer = new StreamWriter(pipeServer) { AutoFlush = true })
                     {
-                        await pipeServer.WaitForConnectionAsync();
-                        Console.WriteLine("Ticket machine connected!");
-
-                        using (var reader = new StreamReader(pipeServer))
-                        using (var writer = new StreamWriter(pipeServer) { AutoFlush = true })
+                        while (pipeServer.IsConnected)
                         {
-                            try
-                            {
-                                while (pipeServer.IsConnected)
-                                {
-                                    var command = await reader.ReadLineAsync();
-                                    if (command == null) break;
-
-                                    Console.WriteLine($"Processing command: {command}");
-
-                                    var response = ProcessCommand(command, parkingGarage);
-
-                                    await writer.WriteLineAsync(response);
-                                    Console.WriteLine($"Sent response: {response}");
-                                }
-                            }
-                            catch (IOException)
-                            {
-                                Console.WriteLine("Ticket machine disconnected.");
-                            }
+                            var command = await reader.ReadLineAsync();
+                            if (command == null) break;
+                
+                            Console.WriteLine($"Client {clientId}: Processing command: {command}");
+                            var response = ProcessCommand(command, parkingGarage);
+                            await writer.WriteLineAsync(response);
+                            Console.WriteLine($"Client {clientId}: Sent response: {response}");
                         }
                     }
-
-                    Console.WriteLine("Connection closed. Waiting for new ticket machine connection...");
+                }
+                catch (IOException ex)
+                {
+                    Console.WriteLine($"Client {clientId} disconnected: {ex.Message}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error handling client {clientId}: {ex.Message}");
+                }
+                finally
+                {
+                    Console.WriteLine($"Client {clientId} connection closed");
                 }
             }
 
@@ -75,6 +97,8 @@ namespace ParkingLot
                 }
             }
         }
+
+
 
         static string DispenseTicket(ParkingGarage parkingGarage, string[] requestParts)
         {
