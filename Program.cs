@@ -1,129 +1,137 @@
-﻿namespace ParkingLot
+﻿using System.IO.Pipes;
+
+namespace ParkingLot
 
 {
     internal class Program
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
+            Console.WriteLine("Parking Lot Server Started.");
             Console.WriteLine("Parking Lot Initialized.");
 
             var parkingGarage = new ParkingGarage(1500);
 
-            var exit = false;
 
-            while (!exit)
+            // Start listening for ticket machine connections
+            await ListenForTicketMachines(parkingGarage);
+
+            static async Task ListenForTicketMachines(ParkingGarage parkingGarage)
             {
-                Console.WriteLine("\n \n \n ###############\nParking Garage Menu:");
-                Console.WriteLine("1. Dispense a Ticket");
-                Console.WriteLine("2. Validate Ticket");
-                Console.WriteLine("3. Get Number of Remaining Spots");
-                Console.WriteLine("4. Lookup Ticket by License Plate");
-                Console.WriteLine("5. Exit");
-                Console.WriteLine("#################");
+                Console.WriteLine("Waiting for ticket machine connection...");
 
-                var input = Console.ReadLine();
-
-                switch (input)
+                while (true)
                 {
-                    case "1":
-                        DispenseTicket(parkingGarage);
-                        break;
-                    case "2":
-                        ValidateTicket(parkingGarage);
-                        break;
-                    case "3":
-                        GetNumberOfRemainingSpots(parkingGarage);
-                        break;
-                    case "4":
-                        LookupTicketByLicencePlate(parkingGarage);
-                        break;
-                    case "5":
-                        exit = true;
-                        Console.WriteLine("Exit");
-                        break;
-                    case "9":
-                        Add1000Spots(parkingGarage);
-                        break;
+                    using (var pipeServer = new NamedPipeServerStream("ParkingGaragePipe", PipeDirection.InOut, 1))
+                    {
+                        await pipeServer.WaitForConnectionAsync();
+                        Console.WriteLine("Ticket machine connected!");
+
+                        using (var reader = new StreamReader(pipeServer))
+                        using (var writer = new StreamWriter(pipeServer) { AutoFlush = true })
+                        {
+                            try
+                            {
+                                while (pipeServer.IsConnected)
+                                {
+                                    var command = await reader.ReadLineAsync();
+                                    if (command == null) break;
+
+                                    Console.WriteLine($"Processing command: {command}");
+
+                                    var response = ProcessCommand(command, parkingGarage);
+
+                                    await writer.WriteLineAsync(response);
+                                    Console.WriteLine($"Sent response: {response}");
+                                }
+                            }
+                            catch (IOException)
+                            {
+                                Console.WriteLine("Ticket machine disconnected.");
+                            }
+                        }
+                    }
+
+                    Console.WriteLine("Connection closed. Waiting for new ticket machine connection...");
+                }
+            }
+
+            static string ProcessCommand(string command, ParkingGarage parkingGarage)
+            {
+                var parts = command.Split('|');
+
+                switch (parts[0])
+                {
+                    case "DISPENSE_TICKET":
+                        return DispenseTicket(parkingGarage, parts);
+                    case "VALIDATE_TICKET":
+                        return ValidateTicket(parkingGarage, parts);
+                    case "GET_AVAILABLE_SPOTS":
+                        return GetNumberOfRemainingSpots(parkingGarage, parts);
+                    case "FIND_TICKET_BY_LICENSE" :
+                        return LookupTicketByLicencePlate(parkingGarage, parts);
                     default:
-                        Console.WriteLine("Invalid choice! Please try again.");
-                        break;
+                        return "ERROR|Unknown command";
                 }
             }
         }
 
-        private static void DispenseTicket(ParkingGarage parkingGarage)
+        static string DispenseTicket(ParkingGarage parkingGarage, string[] requestParts)
         {
-            Console.WriteLine("\n Select Vehicle Type to Park:");
-            Console.WriteLine("1. Car");
-            Console.WriteLine("2. Motorcycle \n");
-
-            var isValidInput = false;
-            var vehicleType = VehicleType.Car;
-            while (!isValidInput)
+            if (requestParts.Count() >= 2)
             {
-                var vehicleTypeInput = Console.ReadLine();
-
+                VehicleType vehicleType = requestParts[1] == "Car" ? VehicleType.Car : VehicleType.Motorcycle;
                 try
                 {
-                    vehicleType = vehicleTypeInput switch
-                                  {
-                                      "1" => VehicleType.Car, "2" => VehicleType.Motorcycle, _ => throw new ArgumentException("Invalid choice. Please choose again.")
-                                  };
-
-                    isValidInput = true;
+                    var vehicle = new Vehicle(vehicleType);
+                    var ticket = parkingGarage.DispenseTicket(vehicle);
+                    return $"TICKET_ISSUED|{ticket.Id}|{ticket.SpotAssignment}|{ticket.TimeStamp}|{vehicle.Id}|{vehicle.Type}|{vehicle.LicensePlate}";
                 }
-                catch (ArgumentException ex)
+                catch (InvalidOperationException ex)
                 {
-                    Console.WriteLine(ex.Message);
+                    return $"ERROR|{ex.Message}";
                 }
             }
 
-            var vehicle = new Vehicle(vehicleType);
-            try
-            {
-                var ticket = parkingGarage.DispenseTicket(vehicle);
-                Console.WriteLine($"\n Ticket Dispensed! \n Ticket ID: {ticket.Id} \n Spot Assignment: {ticket.SpotAssignment} \n TimeStamp: {ticket.TimeStamp} \n Vehicle ID: {vehicle.Id} \n Vehicle Type: {vehicle.Type} \n License Plate: {vehicle.LicensePlate} ");
-            }
-            catch (InvalidOperationException ex)
-            {
-                Console.WriteLine($"\n Unable to dispense ticket: {ex.Message}");
-            }
+            return "ERROR|Invalid DISPENSE_TICKET command format.";
         }
 
-        private static void ValidateTicket(ParkingGarage parkingGarage)
+        static string ValidateTicket(ParkingGarage parkingGarage, string[] requestParts)
         {
-            Console.WriteLine("\n Enter Ticket ID to Validate:");
-            var ticketIdInput = Console.ReadLine();
-
-            if (int.TryParse(ticketIdInput, out var ticketId))
+            if (requestParts.Count() >= 2 && int.TryParse(requestParts[1], out var ticketId))
             {
                 var response = parkingGarage.ValidateTicket(ticketId);
-                Console.WriteLine($"\n {response}");
+                return $"TICKET_VALIDATED|{response}";
             }
-            else
-            {
-                Console.WriteLine("Invalid Ticket ID. Please enter a number.");
-            }
+
+            return "ERROR|Invalid VALIDATE_TICKET command format.";
         }
 
-        private static void GetNumberOfRemainingSpots(ParkingGarage parkingGarage)
+        static string GetNumberOfRemainingSpots(ParkingGarage parkingGarage, string[] responseParts)
         {
+
             var response = parkingGarage.GetNumberOfRemainingSpots();
-
-            Console.WriteLine($"\n Remaining Parking Spots:");
-            Console.WriteLine($"Total Empty Spots: {response.TotalEmptySpots}");
-            Console.WriteLine($"Motorcycle Only Spots: {response.MotorcycleOnlySpots}");
+            return $"AVAILABLE_SPOTS|{response.TotalEmptySpots}|{response.MotorcycleOnlySpots}";
         }
 
-        private static void LookupTicketByLicencePlate(ParkingGarage parkingGarage)
-        {
-            Console.WriteLine("\n Enter Licence Plate to Lookup Ticket:");
-            var spotAssignmentInput = Console.ReadLine();
 
-            var ticket = parkingGarage.FindTicketIdByLicencePlate(spotAssignmentInput);
-            Console.WriteLine(ticket != null 
-                ? $"\n Ticket Found! \n Ticket ID: {ticket.Id} \n Spot Assignment: {ticket.SpotAssignment} \n TimeStamp: {ticket.TimeStamp} \n Vehicle ID: {ticket.Vehicle.Id} \n Vehicle Type: {ticket.Vehicle.Type}" 
-                : "No ticket found for the given spot assignment.");
+        static string LookupTicketByLicencePlate(ParkingGarage parkingGarage, string[] responseParts)
+        {
+            if (responseParts.Count() >= 2)
+            {
+                var licencePlate = responseParts[1];
+                var ticket = parkingGarage.FindTicketIdByLicencePlate(licencePlate);
+                if (ticket != null)
+                {
+                    return $"TICKET_FOUND|{ticket.Id}|{ticket.SpotAssignment}|{ticket.TimeStamp}|{ticket.Vehicle.Id}|{ticket.Vehicle.Type}|{ticket.Vehicle.LicensePlate}";
+                }
+                else
+                {
+                    return "TICKET_NOT_FOUND";
+                }
+            }
+            return "ERROR|Invalid VALIDATE_TICKET command format.";
+
         }
 
         private static void Add1000Spots(ParkingGarage parkingGarage)
@@ -139,3 +147,11 @@
         }
     }
 }
+
+
+
+
+
+
+
+

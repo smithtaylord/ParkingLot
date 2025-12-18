@@ -12,3 +12,4 @@
 /Users/tsmith/code/ParkingLot/ParkingLot/obj/Debug/net7.0/ParkingLot.pdb
 /Users/tsmith/code/ParkingLot/ParkingLot/obj/Debug/net7.0/ParkingLot.genruntimeconfig.cache
 /Users/tsmith/code/ParkingLot/ParkingLot/obj/Debug/net7.0/ref/ParkingLot.dll
+/Users/tsmith/code/ParkingLot/ParkingLot/obj/Debug/net7.0/ParkingLot.sourcelink.json
